@@ -1,19 +1,22 @@
-from pathlib import Path
-
-import matplotlib.pyplot as plt
+import os
 import pandas as pd
+import matplotlib.pyplot as plt
 
-RESULTS_FILE = Path("results/results.csv")
-PLOTS_DIR = Path("results/plots")
-PLOTS_DIR.mkdir(parents=True, exist_ok=True)
 
-if not RESULTS_FILE.exists():
-    raise SystemExit(
-        "Error: results/results.csv not found. Run the Java benchmark first."
-    )
+INPUT_FILE = "results/results.csv"
+OUTPUT_DIR = "results/plots"
 
-df = pd.read_csv(RESULTS_FILE)
-required_columns = {
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+
+try:
+    df = pd.read_csv(INPUT_FILE)
+except FileNotFoundError:
+    print(f"Error: {INPUT_FILE} not found.")
+    exit(1)
+
+
+required_columns = [
     "workload",
     "variant",
     "structure",
@@ -21,116 +24,152 @@ required_columns = {
     "time_ms",
     "steps",
     "moves",
-    "comparisons",
-}
-missing = required_columns - set(df.columns)
+    "comparisons"
+]
+
+missing = [column for column in required_columns if column not in df.columns]
+
 if missing:
-    raise SystemExit(f"Error: missing CSV columns: {sorted(missing)}")
+    print("Error: missing columns:")
+    for column in missing:
+        print(f"  - {column}")
+    exit(1)
+
 
 markers = {
     "DynamicArray": "o",
     "MyLinkedList": "s",
-    "MinHeap": "^",
+    "MinHeap": "^"
 }
-colors = {
-    "DynamicArray": "tab:blue",
-    "MyLinkedList": "tab:red",
-    "MinHeap": "tab:green",
-}
+
 line_styles = {
     "head": "--",
     "middle": ":",
-    "-": "-",
+    "-": "-"
 }
 
 
-def label_for(structure, variant):
-    return structure if variant == "-" else f"{structure} ({variant})"
-
-
-def create_time_plot(subset, workload):
+def create_plot(
+        subset_df,
+        metric,
+        title,
+        ylabel,
+        filename
+):
     plt.figure(figsize=(10, 6))
 
-    for (structure, variant), group in subset.groupby(["structure", "variant"]):
+    groups = subset_df.groupby(
+        ["structure", "variant"],
+        sort=False
+    )
+
+    for (structure, variant), group in groups:
+
         group = group.sort_values("n")
+
+        if variant == "-":
+            label = structure
+        else:
+            label = f"{structure} ({variant})"
+
         plt.plot(
             group["n"],
-            group["time_ms"],
+            group[metric],
             marker=markers.get(structure, "o"),
-            color=colors.get(structure),
             linestyle=line_styles.get(variant, "-"),
-            label=label_for(structure, variant),
+            linewidth=2,
+            markersize=6,
+            label=label
         )
 
     plt.xscale("log")
-    if (subset["time_ms"] > 0).all():
-        plt.yscale("log")
 
-    plt.title(f"[{workload}] Time vs Input Size (n)", fontsize=14, fontweight="bold")
-    plt.xlabel("Input Size (n)", fontsize=12)
-    plt.ylabel("Time (ms)", fontsize=12)
-    plt.grid(True, which="both", linestyle="--", alpha=0.7)
-    plt.legend(title="Structure & Variant", bbox_to_anchor=(1.05, 1), loc="upper left")
+    # Operation counters can contain zero.
+    # Log scale would make zero impossible to display.
+    if metric != "time_ms":
+        positive_values = subset_df[metric][subset_df[metric] > 0]
+
+        if len(positive_values) > 0:
+            plt.yscale("log")
+
+    else:
+        positive_values = subset_df["time_ms"][subset_df["time_ms"] > 0]
+
+        if len(positive_values) > 0:
+            plt.yscale("log")
+
+    plt.title(title, fontsize=14, fontweight="bold")
+    plt.xlabel("Array Size (n)", fontsize=12)
+    plt.ylabel(ylabel, fontsize=12)
+
+    plt.grid(
+        True,
+        which="both",
+        linestyle="--",
+        alpha=0.5
+    )
+
+    plt.legend(
+        title="Structure & Variant"
+    )
+
     plt.tight_layout()
-    path = PLOTS_DIR / f"{workload}_time_vs_n.png"
-    plt.savefig(path, dpi=300)
+
+    filepath = os.path.join(
+        OUTPUT_DIR,
+        filename
+    )
+
+    plt.savefig(
+        filepath,
+        dpi=300,
+        bbox_inches="tight"
+    )
+
     plt.close()
 
-
-def create_operations_plot(subset, workload):
-    plt.figure(figsize=(12, 7))
-
-    metric_styles = {
-        "steps": "-",
-        "moves": "--",
-        "comparisons": ":",
-    }
-
-    plotted = False
-    for (structure, variant), group in subset.groupby(["structure", "variant"]):
-        group = group.sort_values("n")
-        base_label = label_for(structure, variant)
-        for metric in ("steps", "moves", "comparisons"):
-            values = group[metric]
-            if values.eq(0).all():
-                continue
-            plt.plot(
-                group["n"],
-                values,
-                marker=markers.get(structure, "o"),
-                color=colors.get(structure),
-                linestyle=metric_styles[metric],
-                label=f"{base_label} — {metric}",
-            )
-            plotted = True
-
-    plt.xscale("log")
-    positive_values = pd.concat(
-        [subset["steps"], subset["moves"], subset["comparisons"]]
-    )
-    non_zero = positive_values[positive_values > 0]
-    if plotted and not non_zero.empty:
-        plt.yscale("log")
-
-    plt.title(
-        f"[{workload}] Steps / Moves / Comparisons vs Input Size (n)",
-        fontsize=14,
-        fontweight="bold",
-    )
-    plt.xlabel("Input Size (n)", fontsize=12)
-    plt.ylabel("Operation Count", fontsize=12)
-    plt.grid(True, which="both", linestyle="--", alpha=0.7)
-    plt.legend(title="Structure / Variant / Metric", bbox_to_anchor=(1.05, 1), loc="upper left")
-    plt.tight_layout()
-    path = PLOTS_DIR / f"{workload}_operations_vs_n.png"
-    plt.savefig(path, dpi=300)
-    plt.close()
+    print(f"Created: {filepath}")
 
 
-for workload in df["workload"].drop_duplicates():
+workloads = df["workload"].drop_duplicates()
+
+
+for workload in workloads:
+
     subset = df[df["workload"] == workload]
-    create_time_plot(subset, workload)
-    create_operations_plot(subset, workload)
-    print(f"Created plots for {workload}")
 
-print(f"All plots saved to {PLOTS_DIR}")
+    create_plot(
+        subset_df=subset,
+        metric="time_ms",
+        title=f"{workload} — Time vs n",
+        ylabel="Time (ms)",
+        filename=f"{workload}_time_vs_n.png"
+    )
+
+    create_plot(
+        subset_df=subset,
+        metric="steps",
+        title=f"{workload} — Steps vs n",
+        ylabel="Steps",
+        filename=f"{workload}_steps_vs_n.png"
+    )
+
+    create_plot(
+        subset_df=subset,
+        metric="moves",
+        title=f"{workload} — Moves vs n",
+        ylabel="Moves",
+        filename=f"{workload}_moves_vs_n.png"
+    )
+
+    create_plot(
+        subset_df=subset,
+        metric="comparisons",
+        title=f"{workload} — Comparisons vs n",
+        ylabel="Comparisons",
+        filename=f"{workload}_comparisons_vs_n.png"
+    )
+
+
+print()
+print("All plots generated successfully.")

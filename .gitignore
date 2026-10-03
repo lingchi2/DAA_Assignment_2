@@ -1,0 +1,8 @@
+target/
+.idea/
+*.iml
+.DS_Store
+
+# Benchmark output is generated locally.
+/results/results.csv
+/results/plots/*.png
